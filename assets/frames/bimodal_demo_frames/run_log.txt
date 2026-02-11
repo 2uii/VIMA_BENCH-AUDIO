@@ -1,0 +1,54 @@
+TASK=constraint_satisfaction/sweep_without_touching
+DISPLAY_DEBUG_WINDOW=True
+
+EPISODE 0
+PROMPT: Sweep all {swept_obj} into {bounds} without touching {constraint}.
+OBS: rgb: type=dict | segm: type=dict | ee: type=int
+No RGB found in obs.
+ep=0 step=1 reward=0 done=False
+ep=0 step=2 reward=0 done=False
+ep=0 step=3 reward=0 done=False
+ep=0 step=4 reward=0 done=False
+ep=0 step=5 reward=0 done=False
+ep=0 step=6 reward=0 done=False
+ep=0 step=7 reward=0 done=False
+ep=0 step=8 reward=0 done=False
+ep=0 step=9 reward=0 done=False
+ep=0 step=10 reward=0 done=False
+ep=0 step=11 reward=0 done=False
+ep=0 step=12 reward=0 done=False
+ep=0 step=13 reward=0 done=False
+ep=0 step=14 reward=0 done=False
+ep=0 step=15 reward=0 done=False
+ep=0 step=16 reward=0 done=False
+ep=0 step=17 reward=0 done=False
+ep=0 step=18 reward=0 done=False
+ep=0 step=19 reward=0 done=False
+ep=0 step=20 reward=0 done=False
+ep=0 step=21 reward=0 done=False
+ep=0 step=22 reward=0 done=False
+ep=0 step=23 reward=0 done=False
+ep=0 step=24 reward=0 done=False
+ep=0 step=25 reward=0 done=False
+ep=0 step=26 reward=0 done=False
+ep=0 step=27 reward=0 done=False
+ep=0 step=28 reward=0 done=False
+ep=0 step=29 reward=0 done=False
+ep=0 step=30 reward=0 done=False
+ep=0 step=31 reward=0 done=False
+ep=0 step=32 reward=0 done=False
+ep=0 step=33 reward=0 done=False
+ep=0 step=34 reward=0 done=False
+ep=0 step=35 reward=0 done=False
+ep=0 step=36 reward=0 done=False
+ep=0 step=37 reward=0 done=False
+ep=0 step=38 reward=0 done=False
+ep=0 step=39 reward=0 done=False
+ep=0 step=40 reward=0 done=False
+ep=0 step=41 reward=0 done=False
+ep=0 step=42 reward=0 done=False
+ep=0 step=43 reward=0 done=False
+ep=0 step=44 reward=0 done=False
+ep=0 step=45 reward=0 done=False
+ep=0 step=46 reward=0 done=False
+ep=0 step=47 reward=0 done=False
