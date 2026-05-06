@@ -19,7 +19,8 @@ print("\n=== TRIMODAL VIMA DEMO ===")
 # -------------------------
 env = make(
     task_name=TASK,
-    display_debug_window=True
+    display_debug_window=True,
+    hide_arm_rgb=False,
 )
 
 obs = env.reset()
@@ -188,7 +189,18 @@ for step in range(TOTAL_STEPS):
     else:
         action = action_space.sample()
 
-    obs, r, d, info = env.step(action)
+        try:
+            while True:
+        # ... your code that builds action ...
+               obs, r, d, info = env.step(action)
+        # ... rest of loop ...
+        except KeyboardInterrupt:
+            print("\n[INFO] Demo stopped by user (Ctrl+C). Closing env...")
+            try:
+                env.close()
+            except Exception:
+               pass
+
     # (keep your audio_vec block after this)
 
 # -------------------------

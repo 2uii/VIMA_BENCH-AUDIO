@@ -1,0 +1,4 @@
+Model,Best Test Loss
+No-audio baseline,0.030058
+Old Audio-VIMA,0.029948
+Real-audio Audio-VIMA,0.026178

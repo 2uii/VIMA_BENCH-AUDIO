@@ -3,6 +3,10 @@ import time
 import subprocess
 from pathlib import Path
 import numpy as np
+from vima_bench.audio.audio_encoder import Wav2Vec2TokenEncoder
+import torchaudio
+import torch
+import soundfile as sf
 
 class AudioIdentityWrapper:
     """
@@ -34,10 +38,9 @@ class AudioIdentityWrapper:
         self.object_sound_map = object_sound_map
         self.cooldown = cooldown
         self.debug = debug
-
         self.ignore_bodies = set(ignore_bodies or [])
         self.tool_bodies = set(tool_bodies or [])
-
+        self.audio_encoder = Wav2Vec2TokenEncoder(token_dim=768)
         self.terminate_on_silent_touch = terminate_on_silent_touch
         self.silent_penalty = float(silent_penalty)
 
@@ -65,14 +68,30 @@ class AudioIdentityWrapper:
         self.last_play_time.clear()
         self.step_count = 0
 
-        # create persistent embeddings for this episode
+    # create persistent embeddings for this episode
         self.audio_obj_emb = {}
+
         for obj_id, label in self.object_sound_map.items():
             if label is None:
                 continue
-            self.audio_obj_emb[obj_id] = self.rng.normal(
-                size=(self.emb_dim,)
-            ).astype("float32")
+
+            wav = self.sound_bank.get(label)
+            if wav:
+                waveform, sr = sf.read(wav, dtype="float32")
+
+# convert stereo → mono
+            if waveform.ndim > 1:
+                waveform = waveform.mean(axis=1)
+
+# convert to torch tensor
+            waveform = torch.tensor(waveform, dtype=torch.float32)
+
+# IMPORTANT: add batch dimension (THIS FIXES EVERYTHING)
+            waveform = waveform.unsqueeze(0)   # shape: (1, T)
+
+# encode
+            audio_feat = self.audio_encoder._encode(waveform).squeeze(0)
+            self.audio_obj_emb[obj_id] = audio_feat.detach().cpu().numpy().astype("float32")
 
         return self.env.reset()
 

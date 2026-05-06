@@ -47,6 +47,14 @@ def main(cfg):
     prompt = traj_meta.pop("prompt")
     prompt_assets = traj_meta.pop("prompt_assets")
 
+    print("-" * 50)
+    print("Audio tokens in prompt_assets:")
+    for name, asset in prompt_assets.items():
+        tok = asset.get("audio_token", None)
+        print(f"  {name}: has_audio_token={tok is not None}")
+        if tok is not None:
+           print(f"    type={type(tok)} len={len(tok)} first5={tok[:5]}")
+
     print("Obs")
     for k, v in rgb_dict.items():
         print(f"RGB {k} view : {v.shape}")

@@ -1,0 +1,4 @@
+Condition,Test Loss
+Clean audio,0.026178
+Shuffled audio,0.026709
+Zero audio,0.030784

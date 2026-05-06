@@ -5,6 +5,9 @@ import tempfile
 import time
 from typing import Literal
 
+from vima_bench.audio.object_audio_provider import ObjectAudioProvider, AudioSpec
+from vima_bench.audio.audio_encoder import Wav2Vec2TokenEncoder
+
 import gym
 import numpy as np
 import pybullet as p
@@ -96,10 +99,13 @@ class VIMAEnvBase(gym.Env):
                 )
             elif modality == "segm":
                 obs_cam_space = {
-                    view: gym.spaces.Box(
-                        0, 255, shape=config["image_size"], dtype=np.uint8
-                    )
-                    for view, config in self.agent_cams.items()
+                   view: gym.spaces.Box(
+                       low=-2147483648,
+                       high=2147483647,
+                       shape=config["image_size"],
+                       dtype=np.int32,
+                   )
+                   for view, config in self.agent_cams.items()
                 }
                 obs_space.update(
                     {
@@ -147,6 +153,20 @@ class VIMAEnvBase(gym.Env):
         self.seed(seed)
 
         self.prompt, self.prompt_assets = None, None
+
+        # ---------------- Audio Identity (Audio-VIMA) ----------------
+        self.audio_provider = ObjectAudioProvider(sample_rate=16000, clip_seconds=1.0, device="cpu")
+        self.audio_encoder = Wav2Vec2TokenEncoder(token_dim=768, device="cpu")
+
+        # Cache wav_path -> audio token (Tensor)
+        self._audio_token_cache = {}
+
+        # Placeholder -> wav mapping (temporary, for testing)
+        self._placeholder_wav_map = {
+            "dragged_obj": "sounds/obj1.wav",
+            "base_obj": "sounds/obj2.wav",
+            "target_obj": "sounds/obj3.wav",
+        }
         self.meta_info = {}
 
         self._display_debug_window = display_debug_window
@@ -188,6 +208,7 @@ class VIMAEnvBase(gym.Env):
             {
                 "pose0_position": self.position_bounds,
                 "pose0_rotation": gym.spaces.Box(
+
                     -1.0, 1.0, shape=(4,), dtype=np.float32
                 ),
                 "pose1_position": self.position_bounds,
@@ -236,6 +257,69 @@ class VIMAEnvBase(gym.Env):
     @global_seed.setter
     def global_seed(self, seed):
         self.seed(seed)
+
+    def _get_audio_token_from_wav(self, wav_path: str):
+        if wav_path in self._audio_token_cache:
+            return self._audio_token_cache[wav_path]
+
+        spec = AudioSpec(
+            audio_id=os.path.basename(wav_path),
+            wav_path=wav_path,
+            policy="loop",
+        )
+
+        clips = self.audio_provider.get_object_clips({0: spec}, step=0)
+        token = self.audio_encoder({0: clips[0]})[0].detach().cpu()
+
+        self._audio_token_cache[wav_path] = token
+        return token
+
+    def _attach_audio_to_prompt_assets(self):
+        if not self.prompt_assets:
+            return
+
+        import os
+
+        sounds_dir = "sounds"
+        wav_pool = sorted(
+            [
+                os.path.join(sounds_dir, f)
+                for f in os.listdir(sounds_dir)
+                if f.lower().endswith(".wav")
+            ]
+        )
+        if len(wav_pool) == 0:
+            raise RuntimeError(f"No .wav files found in {sounds_dir}/")
+
+        # persistent mapping: (obj_name, obj_color) -> wav_path
+        if not hasattr(self, "_objkey_wav_map"):
+            self._objkey_wav_map = {}
+
+        for placeholder_name, asset in self.prompt_assets.items():
+            obj_info = {}
+            if "segm" in asset and isinstance(asset["segm"], dict):
+                obj_info = asset["segm"].get("obj_info", {}) or {}
+
+    # FIX: handle list case (multi-object segmentation)
+                if isinstance(obj_info, list):
+                    if len(obj_info) > 0 and isinstance(obj_info[0], dict):
+                        obj_info = obj_info[0]
+                    else:
+                        obj_info = {}
+
+            obj_name = str(obj_info.get("obj_name", "unknown"))
+            obj_color = str(obj_info.get("obj_color", "unknown"))
+            obj_key = (obj_name, obj_color)
+
+            if obj_key not in self._objkey_wav_map:
+                self._objkey_wav_map[obj_key] = wav_pool[len(self._objkey_wav_map) % len(wav_pool)]
+
+            wav_path = self._objkey_wav_map[obj_key]
+            audio_id = f"{obj_name}__{obj_color}".replace(" ", "_")
+
+            asset["audio_id"] = audio_id
+            asset["wav_path"] = wav_path
+            asset["audio_token"] = self._get_audio_token_from_wav(wav_path).numpy().tolist()
 
     def get_prompt_and_assets(self):
         """
@@ -328,7 +412,7 @@ class VIMAEnvBase(gym.Env):
 
         # generate prompt and corresponding assets
         self.prompt, self.prompt_assets = self.task.generate_prompt()
-
+        self._attach_audio_to_prompt_assets()
         # generate meta info dict
         if isinstance(self.ee, Suction):
             self.meta_info["end_effector_type"] = "suction"
@@ -591,7 +675,7 @@ class VIMAEnvBase(gym.Env):
 
     def render_camera(self, config, image_size=None):
         """Render RGB-D image with specified camera configuration."""
-        if not image_size:
+        if image_size is None:
             image_size = config["image_size"]
 
         # OpenGL camera settings.
@@ -653,7 +737,7 @@ class VIMAEnvBase(gym.Env):
         depth = depth[np.newaxis, ...]
 
         # Get segmentation image.
-        segm = np.uint8(segm).reshape(depth_image_size)
+        segm = np.int32(segm).reshape(depth_image_size)
 
         return color, depth, segm
 
