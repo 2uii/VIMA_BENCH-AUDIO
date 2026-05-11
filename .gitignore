@@ -1,3 +1,12 @@
+*.pt
+*.pkl
+data_audio_train/
+data_audio_test/
+vima_streamlit_env/
+__pycache__/
+*.csv
+results/
+
 *.ipynb
 
 # Byte-compiled / optimized / DLL files
