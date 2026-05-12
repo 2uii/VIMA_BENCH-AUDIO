@@ -47,7 +47,7 @@ class AudioIdentityWrapper:
         self.last_play_time = {}
         self.audio_events = []
         self.step_count = 0
-
+        self.audio_memory = {}
         # audio embedding state (persistent per episode)
         self.emb_dim = 128
         self.rng = np.random.default_rng(42)
@@ -67,7 +67,7 @@ class AudioIdentityWrapper:
         self.audio_events.clear()
         self.last_play_time.clear()
         self.step_count = 0
-
+        self.audio_memory = {}
     # create persistent embeddings for this episode
         self.audio_obj_emb = {}
 
@@ -159,15 +159,47 @@ class AudioIdentityWrapper:
                 if wav:
                     self._play(wav)
 
+                # encode heard sound event
+                waveform, sr = sf.read(wav, dtype="float32")
+
+                if waveform.ndim > 1:
+                    waveform = waveform.mean(axis=1)
+
+                waveform = torch.tensor(waveform, dtype=torch.float32).unsqueeze(0)
+
+                heard_audio_feat = (
+                    self.audio_encoder
+                    ._encode(waveform)
+                    .squeeze(0)
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype("float32")
+                )
+
+                event_type = "tool_contact" if tool_touch else "object_contact"
+
                 self.audio_events.append(
                     {
                         "step": self.step_count,
                         "object_id": hit_id,
                         "sound": sound_label,
+                        "wav_path": wav,
+                        "event_type": event_type,
                         "other_body": other_id,
                         "tool_touch": tool_touch,
+                        "audio_token": heard_audio_feat,
                     }
-                )
+                )                
+                
+                self.audio_memory[hit_id] = {
+                    "last_sound": sound_label,
+                    "last_step": self.step_count,
+                    "event_count": self.audio_memory.get(hit_id, {}).get("event_count", 0) + 1,
+                    "last_event_type": event_type,
+                    "last_wav_path": wav,
+                    "last_audio_token": heard_audio_feat,
+                }
                 self.last_play_time[hit_id] = now
 
         # enforce rule: touching silent objects ends episode
@@ -182,6 +214,17 @@ class AudioIdentityWrapper:
         # ------------------------------------------------
         info = dict(info) if info is not None else {}
         info["audio_events"] = list(self.audio_events)
+        info["audio_memory"] = {
+            k: {
+                "last_sound": v["last_sound"],
+                "last_step": v["last_step"],
+                "event_count": v["event_count"],
+                "last_event_type": v["last_event_type"],
+                "last_wav_path": v["last_wav_path"],
+                "last_audio_token": v["last_audio_token"].tolist(),
+            }
+            for k, v in self.audio_memory.items()
+        }
         info["audio_identity"] = dict(self.object_sound_map)
         info["audio_obj_emb"] = {
             k: v.tolist() for k, v in self.audio_obj_emb.items()

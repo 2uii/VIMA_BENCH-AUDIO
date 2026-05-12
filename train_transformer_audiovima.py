@@ -1,16 +1,17 @@
-import pickle
-import random
+import pickle, random
 import numpy as np
 from PIL import Image
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
 
-DATA_PATH = "full_multitask_audiovima_100eps_real_audio_v2_dataset.pkl"
-CKPT_PATH = "transformer_audiovima_real_audio_best.pt"
-
+DATA_PATH = "full_multitask_audiovima_dataset.pkl"
 MAX_OBJECTS = 8
 MAX_PROMPT_LEN = 40
+
+random.seed(42)
+torch.manual_seed(42)
 
 data = pickle.load(open(DATA_PATH, "rb"))
 samples = data["samples"]
@@ -26,11 +27,12 @@ task2idx = {x: i for i, x in enumerate(tasks)}
 role2idx = {x: i for i, x in enumerate(roles)}
 name2idx = {x: i for i, x in enumerate(obj_names)}
 color2idx = {x: i for i, x in enumerate(obj_colors)}
-word2idx = {x: i + 1 for i, x in enumerate(prompt_vocab)}
+word2idx = {x: i + 1 for i, x in enumerate(prompt_vocab)}  # 0 = pad
 
-
-def tokenize_prompt(text):
-    return text.lower().replace(".", "").replace(",", "").split()
+random.shuffle(samples)
+split = int(0.8 * len(samples))
+train_samples = samples[:split]
+test_samples = samples[split:]
 
 
 def load_image(path):
@@ -48,13 +50,17 @@ def encode_prompt(tokens):
 
 
 def encode_objects(placeholders):
-    role_ids, name_ids, color_ids = [], [], []
-    centroids, audio_tokens, mask = [], [], []
+    role_ids = []
+    name_ids = []
+    color_ids = []
+    centroids = []
+    audio_tokens = []
+    mask = []
 
     for p in placeholders[:MAX_OBJECTS]:
-        role_ids.append(role2idx.get(p["role"], 0))
-        name_ids.append(name2idx.get(p["obj_name"], 0))
-        color_ids.append(color2idx.get(p["obj_color"], 0))
+        role_ids.append(role2idx[p["role"]])
+        name_ids.append(name2idx[p["obj_name"]])
+        color_ids.append(color2idx[p["obj_color"]])
         centroids.append(p["centroid"])
         audio_tokens.append(p["audio_token"])
         mask.append(1)
@@ -70,11 +76,60 @@ def encode_objects(placeholders):
     return role_ids, name_ids, color_ids, centroids, audio_tokens, mask
 
 
+def build_tensors(rows):
+    imgs = []
+    task_ids = []
+    prompt_ids = []
+
+    obj_roles = []
+    obj_names = []
+    obj_colors = []
+    obj_centroids = []
+    obj_audio = []
+    obj_masks = []
+
+    targets = []
+
+    for s in rows:
+        r, n, c, cent, aud, m = encode_objects(s["placeholders"])
+
+        imgs.append(load_image(s["image_path"]))
+        task_ids.append(task2idx[s["task"]])
+        prompt_ids.append(encode_prompt(s["prompt_tokens"]))
+
+        obj_roles.append(r)
+        obj_names.append(n)
+        obj_colors.append(c)
+        obj_centroids.append(cent)
+        obj_audio.append(aud)
+        obj_masks.append(m)
+
+        targets.append(s["target"])
+
+    return (
+        torch.tensor(np.array(imgs), dtype=torch.float32),
+        torch.tensor(task_ids, dtype=torch.long),
+        torch.tensor(np.array(prompt_ids), dtype=torch.long),
+        torch.tensor(np.array(obj_roles), dtype=torch.long),
+        torch.tensor(np.array(obj_names), dtype=torch.long),
+        torch.tensor(np.array(obj_colors), dtype=torch.long),
+        torch.tensor(np.array(obj_centroids), dtype=torch.float32),
+        torch.tensor(np.array(obj_audio), dtype=torch.float32),
+        torch.tensor(np.array(obj_masks), dtype=torch.bool),
+        torch.tensor(np.array(targets), dtype=torch.float32),
+    )
+
+
+X_img_tr, X_task_tr, X_prompt_tr, X_orole_tr, X_oname_tr, X_ocolor_tr, X_ocent_tr, X_oaudio_tr, X_omask_tr, Y_train = build_tensors(train_samples)
+X_img_te, X_task_te, X_prompt_te, X_orole_te, X_oname_te, X_ocolor_te, X_ocent_te, X_oaudio_te, X_omask_te, Y_test = build_tensors(test_samples)
+
+
 class TransformerAudioVIMA(nn.Module):
     def __init__(self):
         super().__init__()
 
         d_model = 128
+        self.d_model = d_model
 
         self.cnn = nn.Sequential(
             nn.Conv2d(3, 16, 5, stride=2, padding=2),
@@ -120,6 +175,7 @@ class TransformerAudioVIMA(nn.Module):
 
     def forward(self, img, task, prompt, obj_role, obj_name, obj_color, obj_centroid, obj_audio, obj_mask):
         img_feat = self.cnn(img)
+
         task_feat = self.task_emb(task)
 
         word_e = self.word_emb(prompt)
@@ -134,6 +190,7 @@ class TransformerAudioVIMA(nn.Module):
         obj_x = torch.cat([role_e, name_e, color_e, obj_centroid, obj_audio], dim=-1)
         obj_tokens = self.object_proj(obj_x)
 
+        # Transformer expects True for padding positions
         padding_mask = ~obj_mask
         obj_encoded = self.obj_transformer(obj_tokens, src_key_padding_mask=padding_mask)
 
@@ -144,56 +201,63 @@ class TransformerAudioVIMA(nn.Module):
         return self.policy(fused)
 
 
+model = TransformerAudioVIMA()
+optimizer = optim.Adam(model.parameters(), lr=3e-4)
+loss_fn = nn.MSELoss()
 
-"""
-    model = TransformerAudioVIMA()
-    ckpt = torch.load(CKPT_PATH, map_location="cpu")
-    model.load_state_dict(ckpt["model_state"])
-    model.eval()
+best_test_loss = float("inf")
+best_epoch = -1
 
-# test on one random dataset sample first
-sample = random.choice(samples)
+for epoch in range(150):
+    model.train()
 
-user_prompt = input("Enter prompt (or press ENTER to use sample prompt): ").strip()
-if not user_prompt:
-    user_prompt = sample.get("prompt", "")
-
-task_name = sample["task"]
-if task_name not in task2idx:
-    raise ValueError(f"Unknown task: {task_name}")
-
-r, n, c, cent, aud, m = encode_objects(sample["placeholders"])
-
-X_img = torch.tensor(load_image(sample["image_path"])).unsqueeze(0).float()
-X_task = torch.tensor([task2idx[task_name]], dtype=torch.long)
-X_prompt = torch.tensor([encode_prompt(tokenize_prompt(user_prompt))], dtype=torch.long)
-X_orole = torch.tensor([r], dtype=torch.long)
-X_oname = torch.tensor([n], dtype=torch.long)
-X_ocolor = torch.tensor([c], dtype=torch.long)
-X_ocent = torch.tensor([cent], dtype=torch.float32)
-X_oaudio = torch.tensor([aud], dtype=torch.float32)
-X_omask = torch.tensor([m], dtype=torch.bool)
-
-with torch.no_grad():
     pred = model(
-        X_img,
-        X_task,
-        X_prompt,
-        X_orole,
-        X_oname,
-        X_ocolor,
-        X_ocent,
-        X_oaudio,
-        X_omask,
+        X_img_tr, X_task_tr, X_prompt_tr,
+        X_orole_tr, X_oname_tr, X_ocolor_tr,
+        X_ocent_tr, X_oaudio_tr, X_omask_tr
     )
 
-print("\n=== Audio-VIMA Inference ===")
-print("Task:", task_name)
-print("Prompt:", user_prompt)
-print("Predicted action [pose0_x, pose0_y, pose1_x, pose1_y]:")
-print(pred.squeeze(0).numpy())
+    loss = loss_fn(pred, Y_train)
 
-if "target" in sample:
-    print("\nGround truth action:")
-    print(np.asarray(sample["target"]))
-"""
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    model.eval()
+    with torch.no_grad():
+        test_pred = model(
+            X_img_te, X_task_te, X_prompt_te,
+            X_orole_te, X_oname_te, X_ocolor_te,
+            X_ocent_te, X_oaudio_te, X_omask_te
+        )
+
+        test_loss = loss_fn(test_pred, Y_test)
+        pose0_err = torch.norm(test_pred[:, 0:2] - Y_test[:, 0:2], dim=1).mean()
+        pose1_err = torch.norm(test_pred[:, 2:4] - Y_test[:, 2:4], dim=1).mean()
+
+        if test_loss.item() < best_test_loss:
+            best_test_loss = test_loss.item()
+            best_epoch = epoch
+            torch.save(
+                {"model_state": model.state_dict(), "metadata": metadata},
+                "transformer_audiovima_best.pt",
+            )
+
+    if epoch % 5 == 0 or epoch == 149:
+        print(
+            f"epoch {epoch:03d} "
+            f"train_loss={loss.item():.6f} "
+            f"test_loss={test_loss.item():.6f} "
+            f"pose0_err={pose0_err.item():.4f} "
+            f"pose1_err={pose1_err.item():.4f}"
+        )
+
+torch.save(
+    {"model_state": model.state_dict(), "metadata": metadata},
+    "transformer_audiovima_final.pt",
+)
+
+
+print("saved transformer_audiovima_final.pt")
+print("best_epoch:", best_epoch)
+print("best_test_loss:", best_test_loss)

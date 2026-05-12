@@ -161,6 +161,8 @@ for task_name in sorted(os.listdir(DATA_ROOT)):
                     "role": role,
                     "obj_name": obj_name,
                     "obj_color": obj_color,
+                    "audio_id": asset.get("audio_id", "unknown"),
+                    "wav_path": asset.get("wav_path", "unknown"),
                     "centroid": centroid_from_mask(mask),
                     "audio_token": encode_audio_from_wav(asset.get("wav_path", "")),
                 }
